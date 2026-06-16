@@ -7,3 +7,4 @@ npm start
 ```
 Then open `http://localhost:3000/`.
 
+Check the releases page to download.
