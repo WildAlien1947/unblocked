@@ -1,7 +1,7 @@
 ## How To Run
 
 ```bash
-cd /Users/bk/Desktop/simple-website
+cd /Users/yourname/Desktop/
 npm install
 npm start
 ```
