@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="terminal chat-terminal">
+  <h1 class="glitch" data-text="Chat">Chat</h1>
+  <div id="joinStep" class="chat-step">
+    <p>Enter a name to join the shared chat room. Other visitors will see public messages, and you can send private notes to contacts.</p>
+    <form id="joinForm" class="chat-input-wrapper">
+      <input id="joinName" type="text" autocomplete="off" placeholder="Your chat name" required>
+      <button type="submit">Join</button>
+    </form>
+    <p class="chat-status" id="joinStatus"></p>
+  </div>
+
+  <div id="chatStep" class="chat-step hidden">
+    <div class="chat-row">
+      <div>
+        <p class="chat-status" id="chatStatus"></p>
+      </div>
+      <div class="chat-recipient-wrapper">
+        <label for="recipientSelect">Send to:</label>
+        <select id="recipientSelect">
+          <option value="everyone">Everyone</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="chat-window">
+      <div class="chat-log" id="chatLog" aria-live="polite"></div>
+      <form id="chatForm" class="chat-input-wrapper">
+        <input id="chatInput" type="text" autocomplete="off" placeholder="Type a message…" required>
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <p><a href="index.html">Back to home</a></p>
+</div>
+
+<script>
+const joinStep = document.getElementById('joinStep');
+const chatStep = document.getElementById('chatStep');
+const joinForm = document.getElementById('joinForm');
+const joinName = document.getElementById('joinName');
+const joinStatus = document.getElementById('joinStatus');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
+const chatLog = document.getElementById('chatLog');
+const chatStatus = document.getElementById('chatStatus');
+const recipientSelect = document.getElementById('recipientSelect');
+
+let currentUser = null;
+let lastMessageId = 0;
+let pollTimer = null;
+
+function setElementText(node, text, error = false) {
+  node.textContent = text;
+  node.classList.toggle('error', error);
+}
+
+function formatTime(timestamp) {
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function addMessage(message) {
+  const row = document.createElement('div');
+  row.className = 'chat-message ' + (message.to === null ? 'public' : (message.to === currentUser || message.from === currentUser ? 'private' : 'hidden'));
+
+  const prefix = message.to === null
+    ? `${message.from} (Everyone)`
+    : message.from === currentUser
+      ? `To ${message.to} (Private)`
+      : `From ${message.from} (Private)`;
+
+  row.innerHTML = `<span class="message-meta">${prefix} · ${formatTime(message.time)}</span><span class="message-text">${message.text}</span>`;
+  chatLog.appendChild(row);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function updateContacts(contacts) {
+  const currentValue = recipientSelect.value || 'everyone';
+  recipientSelect.innerHTML = '<option value="everyone">Everyone</option>' +
+    contacts.map(contact => `<option value="${contact}">${contact}</option>`).join('');
+  if ([...recipientSelect.options].some(option => option.value === currentValue)) {
+    recipientSelect.value = currentValue;
+  }
+}
+
+async function fetchChatData() {
+  if (!currentUser) return;
+  try {
+    const res = await fetch(`/chat/messages?user=${encodeURIComponent(currentUser)}&since=${lastMessageId}`);
+    if (!res.ok) throw new Error('Unable to fetch chat');
+    const data = await res.json();
+
+    if (data.messages && data.messages.length) {
+      data.messages.forEach(addMessage);
+      lastMessageId = data.lastId;
+    }
+    updateContacts(data.contacts || []);
+    setElementText(chatStatus, `Joined as ${currentUser}. ${data.contacts.length} contact(s) online.`);
+  } catch (error) {
+    setElementText(chatStatus, 'Disconnected from chat. Trying again…', true);
+  }
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  fetchChatData();
+  pollTimer = setInterval(fetchChatData, 1200);
+}
+
+async function joinChat(name) {
+  try {
+    const res = await fetch('/chat/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || 'Unable to join chat');
+    }
+
+    currentUser = name;
+    localStorage.setItem('chatUser', currentUser);
+    joinStep.classList.add('hidden');
+    chatStep.classList.remove('hidden');
+    setElementText(joinStatus, '');
+    setElementText(chatStatus, `Joined as ${currentUser}.`);
+    startPolling();
+  } catch (error) {
+    setElementText(joinStatus, error.message, true);
+  }
+}
+
+function renderSavedUser() {
+  const savedName = localStorage.getItem('chatUser');
+  if (savedName) {
+    joinName.value = savedName;
+    joinChat(savedName);
+  }
+}
+
+joinForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const name = joinName.value.trim();
+  if (name) {
+    joinChat(name);
+  }
+});
+
+chatForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text || !currentUser) return;
+
+  const recipient = recipientSelect.value || 'everyone';
+
+  try {
+    const res = await fetch('/chat/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: currentUser, to: recipient, text })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to send message');
+
+    chatInput.value = '';
+    if (recipient === 'everyone') {
+      addMessage(data.message);
+      lastMessageId = data.message.id;
+    }
+  } catch (error) {
+    setElementText(chatStatus, error.message, true);
+  }
+});
+
+renderSavedUser();
+</script>
+<script src="matrix-rain.js"></script>
+</body>
+</html>
